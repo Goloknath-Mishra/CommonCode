@@ -1,0 +1,13 @@
+Field values format: {!EntityLogicalName:FieldLogicalName;}
+
+Text Field: {!EntityLogicalName:FieldLogicalName;}
+
+Date Field: {!EntityLogicalName:FieldLogicalName/@date;}
+
+Time Field: {!EntityLogicalName:FieldLogicalName/@time;}
+
+Lookup Field (primary name field): {!EntityLogicalName:FieldLogicalName/@name;}
+
+Option Set Field (text/label value): {!EntityLogicalName:FieldLogicalName/@name;}
+
+Two Option Field (text/label value): {!EntityLogicalName:FieldLogicalName/@name;}
