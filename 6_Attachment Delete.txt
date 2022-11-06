@@ -1,0 +1,86 @@
+IF  EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[usp_ag_delete_attachments]') AND type in (N'P', N'PC'))
+    DROP PROCEDURE [dbo].[usp_ag_delete_attachments]
+GO
+ 
+SET ANSI_NULLS ON
+GO
+ 
+SET QUOTED_IDENTIFIER ON
+GO
+ 
+CREATE PROCEDURE [dbo].[usp_ag_delete_attachments] (@BatchSize INT = 1000)
+AS
+BEGIN
+    SET NOCOUNT ON
+ 
+    DECLARE @Cursor         CURSOR
+    DECLARE @AttachmentId   UNIQUEIDENTIFIER
+    DECLARE @Count          INT
+ 
+    PRINT 'Batch size = ' + CAST(@BatchSize as varchar)
+ 
+    SET @Count = 0
+    SET @Cursor = CURSOR for
+         SELECT
+            ATT.AttachmentId
+        FROM
+            Attachment AS ATT
+            INNER JOIN ActivityMimeAttachment AS XXX ON ATT.AttachmentId = XXX.AttachmentId
+            INNER JOIN EmailBase AS EML ON EML.ActivityId = XXX.ObjectId
+            INNER JOIN ActivityPointer AS ACT ON EML.ActivityId = ACT.ActivityId
+        WHERE
+            XXX.ObjectTypeCode = 4202
+            --AND ATT.FileSize > 36
+            AND ACT.ModifiedOn < GETDATE() - 90
+            and ATT.FileName='ICARE Password Change Guide.pdf'
+ 
+    OPEN @Cursor
+    FETCH NEXT FROM @Cursor INTO @AttachmentId
+ 
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+ 
+        BEGIN TRANSACTION
+ 
+        UPDATE
+            Attachment
+        SET
+            Body = 'QXR0YWNobWVudCB3YXMgYXJjaGl2ZWQgLSAxMi8yMDExLg==',
+            FileSize = 36,
+            MimeType = 'text/plain',
+            FileName = FileName + '.txt'
+        WHERE
+            AttachmentId = @AttachmentId
+ 
+        COMMIT TRANSACTION
+        SET @Count = @Count + 1
+        IF @Count >= @BatchSize BREAK
+ 
+        PRINT @Count
+ 
+        FETCH NEXT FROM @Cursor INTO @AttachmentId
+    END
+    CLOSE @Cursor
+    DEALLOCATE @Cursor
+ 
+    PRINT 'Processed ' + CAST(@Count as varchar) + ' records.'
+END
+GO
+
+
+
+
+
+
+
+
+
+
+
+
+
+---EXEC usp_ag_delete_attachments
+--or
+
+--EXEC usp_ag_delete_attachments NNNN 
+--where NNNN stands for the number of records that the script will process (the default is 1,000).

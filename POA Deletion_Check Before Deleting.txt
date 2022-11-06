@@ -1,0 +1,424 @@
+http://dotnetdust.blogspot.sg/2014/01/lessons-learned-deleting-312-million.html
+
+
+After multiple modifications to Microsoft's scripts in our test environments we ended up splitting/modifying the Microsoft into 4 different scripts.
+
+Create and populate ToDeletePOAEntries Table.
+Drop the existing indexes on the POA table, add a single index just with the columns needed for the join
+Delete the POA records
+Reset the index changes made in Script 2.
+
+
+Script 1: Creates ToDeletePOAEntries table, populating it with all of the records that need to be removed out of the POA table.  This is basically the first part of the Microsoft script,
+
+USE [Contoso_MSCRM] 
+GO 
+
+IF NOT EXISTS (SELECT * FROM sys.sysobjects 
+WHERE id = object_id(N'[dbo].[ToDeletePOAEntries]') 
+AND ObjectProperty(id, N'IsUserTable') = 1) 
+
+create table ToDeletePoaEntries 
+( 
+ObjectId uniqueidentifier, 
+Otc int 
+) 
+IF NOT EXISTS (SELECT * FROM sys.sysindexes si 
+INNER JOIN sys.sysobjects so ON si.id = so.id 
+WHERE so.id = OBJECT_ID(N'[dbo].[ToDeletePoaEntries]') 
+AND OBJECTPROPERTY(so.id, N'IsUserTable') = 1 
+AND si.name LIKE '%mainindex%') 
+
+CREATE UNIQUE NONCLUSTERED INDEX [mainindex] ON [dbo].[ToDeletePoaEntries] 
+( 
+[ObjectId] ASC, 
+[Otc] ASC 
+)WITH (STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, IGNORE_DUP_KEY = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY] 
+
+----- Insert records to be deleted in ToDeletePoaEntries 
+
+-- go through all user-owned entities which are not replicated and don't support duplicate detection 
+declare entity_cursor cursor local FORWARD_ONLY READ_ONLY 
+for select distinct e.ObjectTypeCode, e.BaseTableName, a.PhysicalName from EntityView e 
+inner join AttributeView a on e.EntityId = a.EntityId and a.IsPKAttribute = 1 
+where e.IsReplicated = 0 and e.IsDuplicateCheckSupported = 0 and e.OwnershipTypeMask & 1 = 1 
+
+open entity_cursor 
+
+declare @baseTableName sysname 
+declare @otc nvarchar(20) 
+declare @primaryKey sysname 
+declare @totalCollected int = 0 
+declare @currentCollected int 
+declare @tempRowCount int = 0 
+declare @collectstatement nvarchar(max)fetch next from entity_cursor 
+into @otc, @baseTableName, @primaryKeywhile @@FETCH_STATUS = 0 
+begin 
+print 'Cleaning up POA for ' + @baseTableName 
+
+set @currentCollected = 0 
+
+
+set @collectstatement = 'insert into ToDeletePoaEntries(ObjectId, Otc) 
+select distinct poa.ObjectId, poa.ObjectTypeCode 
+from PrincipalObjectAccess poa left join ' + @baseTableName + ' e on poa.ObjectId = e.' + @primaryKey + 
+' where e.' + @primaryKey + ' is null and poa.ObjectTypeCode = ' + @otc; 
+
+print @collectstatement 
+
+exec(@collectstatement) 
+set @tempRowCount = @@ROWCOUNT 
+set @currentCollected = @currentCollected + @tempRowCount 
+print CAST(@currentCollected as nvarchar(20)) + ' records collected for ' + @baseTableName 
+set @totalCollected = @totalCollected + @currentCollected 
+
+fetch next from entity_cursor 
+into @otc, @baseTableName, @primaryKey 
+end 
+
+close entity_cursor 
+deallocate entity_cursor 
+
+print CAST(@totalCollected as nvarchar(20)) + ' total records collected'
+
+
+
+Script 2: Drop the existing indexes on the POA table, add a single index just with the columns needed for the join.  This isn’t included in Microsoft’s script, and I don’t have any data as far as how helpful this was, but it should result in the least amount of work required by the database in order to delete a record.
+
+USE [Contoso_MSCRM] 
+
+go 
+
+/****** Object:  Index [ndx_PrimaryKey_PrincipalObjectAccess]    Script Date: 12/18/2013 08:44:05 ******/ 
+IF EXISTS (SELECT * 
+           FROM   sys.indexes 
+           WHERE  object_id = Object_id(N'[dbo].[PrincipalObjectAccess]') 
+                  AND name = N'ndx_PrimaryKey_PrincipalObjectAccess') 
+  ALTER TABLE [dbo].[principalobjectaccess] 
+    DROP CONSTRAINT [ndx_PrimaryKey_PrincipalObjectAccess] 
+
+go 
+
+/****** Object:  Index [ndx_Cover]    Script Date: 12/18/2013 08:44:15 ******/ 
+IF EXISTS (SELECT * 
+           FROM   sys.indexes 
+           WHERE  object_id = Object_id(N'[dbo].[PrincipalObjectAccess]') 
+                  AND name = N'ndx_Cover') 
+  DROP INDEX [ndx_Cover] ON [dbo].[PrincipalObjectAccess] WITH ( online = OFF ) 
+
+go 
+
+/****** Object:  Index [fndx_Sync_VersionNumber]    Script Date: 12/18/2013 08:44:33 ******/ 
+IF EXISTS (SELECT * 
+           FROM   sys.indexes 
+           WHERE  object_id = Object_id(N'[dbo].[PrincipalObjectAccess]') 
+                  AND name = N'fndx_Sync_VersionNumber') 
+  DROP INDEX [fndx_Sync_VersionNumber] ON [dbo].[PrincipalObjectAccess] WITH ( 
+  online = OFF ) 
+
+go 
+
+/****** Object:  Index [cndx_PrincipalObjectAccess]    Script Date: 12/18/2013 08:44:45 ******/ 
+IF EXISTS (SELECT * 
+           FROM   sys.indexes 
+           WHERE  object_id = Object_id(N'[dbo].[PrincipalObjectAccess]') 
+                  AND name = N'cndx_PrincipalObjectAccess') 
+  DROP INDEX [cndx_PrincipalObjectAccess] ON [dbo].[PrincipalObjectAccess] WITH 
+  ( 
+  online = OFF ) 
+
+go 
+
+/****** Object:  Index [UQ_PrincipalObjectAccess]    Script Date: 12/18/2013 08:45:56 ******/ 
+IF EXISTS (SELECT * 
+           FROM   sys.indexes 
+           WHERE  object_id = Object_id(N'[dbo].[PrincipalObjectAccess]') 
+                  AND name = N'UQ_PrincipalObjectAccess') 
+  ALTER TABLE [dbo].[principalobjectaccess] 
+    DROP CONSTRAINT [UQ_PrincipalObjectAccess] 
+
+go 
+
+CREATE NONCLUSTERED INDEX [IX_CleanupIndex] 
+  ON [dbo].[PrincipalObjectAccess] ( [objectid] ASC, [objecttypecode] ASC ) 
+  WITH (statistics_norecompute = OFF, sort_in_tempdb = OFF, ignore_dup_key = OFF 
+, drop_existing = OFF, online = OFF, allow_row_locks = ON, allow_page_locks = ON 
+) ON [PRIMARY] 
+
+go 
+Script 3: Delete the POA records.  This script has the most changes from the Microsoft version.  It wasn’t until we actually started running the scripts in Prod that we finally figured out our main bottle neck, the join of the POA table to the ToDeletePOAEntries.  For every million records deleted, the next time through the loop, the SQL server would attempt to find records that had just been deleted first, before joining on the records not yet deleted.  There is vast rooms for improvement here I’m sure, but this is what we came up with over winter holiday.
+
+USE [Contoso_MSCRM] 
+
+go 
+
+-- Delete query 
+-- This scripts cleans up orphaned POA records for selected entities 
+DECLARE @deleteBatchSize INT = 50000 
+DECLARE @deleteBatchSizeNVarChar NVARCHAR(10) = Cast( 
+        @deleteBatchSize AS NVARCHAR(10)) 
+DECLARE @totalDeleted INT = 0 
+DECLARE @currentDeleted INT 
+DECLARE @deletestatement NVARCHAR(max) 
+DECLARE @retry INT = 1 
+DECLARE @tempRowCount INT = 0 
+DECLARE @recipientList NVARCHAR(1000) = 'MSmith@Contoso.com;JDoe@Contoso.com' 
+DECLARE @backupScript NVARCHAR(1000) 
+DECLARE @backupCount INT = 0 
+DECLARE @bodyText NVARCHAR(4000) 
+DECLARE @subjectText NVARCHAR(1000) 
+DECLARE @baseTableName SYSNAME 
+DECLARE @otc NVARCHAR(20) 
+DECLARE @primaryKey SYSNAME 
+DECLARE @totalCollected INT = 0 
+DECLARE @currentCollected INT 
+DECLARE @tempRowCountRecreate INT = 0 
+DECLARE @collectstatement NVARCHAR(max) 
+
+WHILE ( @retry > 0 ) 
+  BEGIN 
+      BEGIN try 
+          SET @currentDeleted = 0 
+          SET @tempRowCount = 0 
+          -- delete all records of the current entity type which don't have corresponding object in the base table 
+          SET @deletestatement = 'delete top (' + @deleteBatchSizeNVarChar 
+                                 + 
+') from PrincipalObjectAccess from PrincipalObjectAccess poa join ToDeletePoaEntries e on poa.ObjectId = e.ObjectId and poa.ObjectTypeCode = e.Otc' 
+
+    PRINT @deletestatement 
+
+    -- delete PrincipalObjectAccess records in batches 
+    EXEC(@deletestatement) 
+
+    SET @tempRowCount = @@ROWCOUNT 
+    SET @currentDeleted = @currentDeleted + @tempRowCount 
+
+    WHILE @tempRowCount = @deleteBatchSize 
+      BEGIN 
+          EXEC(@deletestatement) 
+
+          SET @tempRowCount = @@ROWCOUNT 
+          SET @currentDeleted = @currentDeleted + @tempRowCount 
+
+          PRINT Cast(@currentDeleted AS NVARCHAR(20)) 
+                + ' records deleted ' 
+                + Cast(Getutcdate() AS NVARCHAR(50)) 
+
+          -- Every 1,000,000 records notify the team that we have deleted another 1,000,000 records, with the total record count 
+          IF ( @currentDeleted % 1000000 = 0 ) 
+            BEGIN 
+                PRINT '1,000,000 records deleted' 
+
+                SET @bodyText = CONVERT(NVARCHAR(20), @currentDeleted) 
+                                + ' POA records deleted.'; 
+
+                EXECUTE msdb.dbo.Sp_send_dbmail 
+                  @profile_name = 'SQLNotify Profile', 
+                  @recipients = @recipientList, 
+                  @body = @bodyText, 
+                  @subject = 'POA Cleanup Progress Email', 
+                  @importance = 'High' 
+            END 
+
+          -- Every 25,000,000 records Rebuild ToDeletePoaEntries 
+          IF ( @currentDeleted % 25000000 = 0 
+                OR @currentDeleted <= 100000 ) 
+            BEGIN 
+                PRINT '25,000,000 records deleted' 
+
+                -- DROP AND RECREATE TABLE 
+                DROP INDEX [mainindex] ON [dbo].[ToDeletePoaEntries] 
+
+                DROP TABLE todeletepoaentries 
+
+                CREATE TABLE todeletepoaentries 
+                  ( 
+                     objectid UNIQUEIDENTIFIER, 
+                     otc      INT 
+                  ) 
+
+                ----- Insert records to be deleted in ToDeletePoaEntries 
+                -- go through all user-owned entities which are not replicated and don't support duplicate detection
+                DECLARE entity_cursor CURSOR local forward_only read_only FOR 
+                  SELECT DISTINCT e.objecttypecode, 
+                                  e.basetablename, 
+                                  a.physicalname 
+                  FROM   entityview e 
+                         INNER JOIN attributeview a 
+                                 ON e.entityid = a.entityid 
+                                    AND a.ispkattribute = 1 
+                  WHERE  e.isreplicated = 0 
+                         AND e.isduplicatechecksupported = 0 
+                         AND e.ownershiptypemask & 1 = 1 
+
+                OPEN entity_cursor 
+
+                SET @totalCollected = 0 
+                SET @tempRowCountRecreate = 0 
+
+                FETCH next FROM entity_cursor INTO @otc, @baseTableName, 
+                @primaryKey 
+
+                WHILE @@FETCH_STATUS = 0 
+                  BEGIN 
+                      PRINT 'Cleaning up POA for ' + @baseTableName 
+
+                      SET @currentCollected = 0 
+                      SET @collectstatement = 'insert into ToDeletePoaEntries(ObjectId, Otc)  select distinct poa.ObjectId, poa.ObjectTypeCode  from PrincipalObjectAccess poa left join ' + @baseTableName 
+                                              + ' e on poa.ObjectId = e.' + 
+                                              @primaryKey 
+                                              + ' where e.' + @primaryKey 
+                                              + 
+                      ' is null and poa.ObjectTypeCode = ' 
+                                              + 
+                                              @otc; 
+
+                      PRINT @collectstatement 
+
+                      EXEC(@collectstatement) 
+
+                      SET @tempRowCountRecreate = @@ROWCOUNT 
+                      SET @currentCollected = 
+                      @currentCollected + @tempRowCountRecreate 
+
+                      PRINT Cast(@currentCollected AS NVARCHAR(20)) 
+                            + ' records collected for ' + @baseTableName 
+
+                      SET @totalCollected = @totalCollected + @currentCollected 
+
+                      FETCH next FROM entity_cursor INTO @otc, @baseTableName, 
+                      @primaryKey 
+                  END 
+
+                CLOSE entity_cursor 
+
+                DEALLOCATE entity_cursor 
+
+                CREATE UNIQUE NONCLUSTERED INDEX [mainindex] 
+                  ON [dbo].[ToDeletePoaEntries] ( [objectid] ASC, [otc] ASC ) 
+                  WITH (statistics_norecompute = OFF, sort_in_tempdb = OFF, 
+                ignore_dup_key 
+                = 
+                OFF, drop_existing = OFF, online = OFF, allow_row_locks = ON, 
+                allow_page_locks = ON) ON [PRIMARY] 
+
+                PRINT Cast(@totalCollected AS NVARCHAR(20)) 
+                      + ' total records collected' 
+            END 
+      END 
+
+    -- We are done! Delete the ToDeletePoaTable and Notify the team 
+    DROP TABLE [dbo].[todeletepoaentries] 
+
+    EXECUTE msdb.dbo.Sp_send_dbmail 
+      @profile_name = 'SQLNotify Profile', 
+      @recipients = @recipientList, 
+      @body = 'All POA Records to be deleted have been deleted.', 
+      @subject = 'POA Cleanup Complete', 
+      @importance = 'High' 
+
+    -- Reset the @retry value to 0, which will allow the code to exit the WHILE loop 
+    SET @retry = 0 
+END try 
+
+    BEGIN catch 
+        PRINT 'Retry ' + CONVERT(NVARCHAR(10), @retry) 
+
+        SET @retry = @retry + 1 
+        -- Hit an error - Notify the team 
+        SET @bodyText = Error_message(); 
+        SET @subjectText = 'POA Cleanup Progress Email - Error ' 
+                           + CONVERT(NVARCHAR(10), @retry); 
+
+        EXECUTE msdb.dbo.Sp_send_dbmail 
+          @profile_name = 'SQLNotify Profile', 
+          @recipients = @recipientList, 
+          @body = @bodyText, 
+          @subject = @subjectText, 
+          @importance = 'High' 
+
+        -- There was an error so let's reindex 
+        ALTER INDEX ALL ON dbo.principalobjectaccess reorganize; 
+
+        UPDATE STATISTICS dbo.principalobjectaccess; 
+    END catch 
+END --END OF THE RETRY LOOP 
+PRINT 'EXECUTION SUCCEED' 
+Script 4: Reset the indexes on the POA table to bring them back to their original condition:
+
+USE [Contoso_MSCRM] 
+
+go 
+
+IF EXISTS (SELECT * 
+           FROM   sys.sysindexes si 
+                  INNER JOIN sys.sysobjects so 
+                          ON si.id = so.id 
+           WHERE  so.id = Object_id(N'[dbo].[ToDeletePoaEntries]') 
+                  AND Objectproperty(so.id, N'IsUserTable') = 1 
+                  AND si.name LIKE '%mainindex%') 
+  DROP TABLE [dbo].[todeletepoaentries] 
+
+go 
+
+USE [Contoso_MSCRM] 
+
+go 
+
+/****** Object:  Index [IX_CleanupIndex]    Script Date: 12/19/2013 16:02:29 ******/ 
+IF EXISTS (SELECT * 
+           FROM   sys.indexes 
+           WHERE  object_id = Object_id(N'[dbo].[PrincipalObjectAccess]') 
+                  AND name = N'IX_CleanupIndex') 
+  DROP INDEX [IX_CleanupIndex] ON [dbo].[PrincipalObjectAccess] WITH ( online = 
+  OFF ) 
+
+go 
+
+/****** Object:  Index [cndx_PrincipalObjectAccess]    Script Date: 12/18/2013 08:52:57 ******/ 
+CREATE CLUSTERED INDEX [cndx_PrincipalObjectAccess] 
+  ON [dbo].[PrincipalObjectAccess] ( [objectid] ASC, [principalid] ASC ) 
+  WITH (pad_index = OFF, statistics_norecompute = OFF, sort_in_tempdb = OFF, 
+ignore_dup_key = OFF, drop_existing = OFF, online = OFF, allow_row_locks = ON, 
+allow_page_locks = ON, FILLFACTOR = 100) ON [PRIMARY] 
+
+go 
+
+/****** Object:  Index [fndx_Sync_VersionNumber]    Script Date: 12/18/2013 08:53:03 ******/ 
+CREATE UNIQUE NONCLUSTERED INDEX [fndx_Sync_VersionNumber] 
+  ON [dbo].[PrincipalObjectAccess] ( [versionnumber] ASC ) 
+WHERE ([VersionNumber] IS NOT NULL) 
+WITH (pad_index = OFF, statistics_norecompute = OFF, sort_in_tempdb = OFF, 
+ignore_dup_key = OFF, drop_existing = OFF, online = OFF, allow_row_locks = ON, 
+allow_page_locks = ON, FILLFACTOR = 100) ON [PRIMARY] 
+
+go 
+
+/****** Object:  Index [ndx_Cover]    Script Date: 12/18/2013 08:53:13 ******/ 
+CREATE NONCLUSTERED INDEX [ndx_Cover] 
+  ON [dbo].[PrincipalObjectAccess] ( [objecttypecode] ASC, [principalid] ASC, 
+[accessrightsmask] ASC, [inheritedaccessrightsmask] ASC ) 
+  WITH (pad_index = OFF, statistics_norecompute = OFF, sort_in_tempdb = OFF, 
+ignore_dup_key = OFF, drop_existing = OFF, online = OFF, allow_row_locks = ON, 
+allow_page_locks = ON, FILLFACTOR = 80) ON [PRIMARY] 
+
+go 
+
+/****** Object:  Index [ndx_PrimaryKey_PrincipalObjectAccess]    Script Date: 12/18/2013 08:53:21 ******/ 
+ALTER TABLE [dbo].[principalobjectaccess] 
+  ADD CONSTRAINT [ndx_PrimaryKey_PrincipalObjectAccess] PRIMARY KEY NONCLUSTERED 
+  ( [principalobjectaccessid] ASC )WITH (pad_index = OFF, statistics_norecompute 
+  = OFF, sort_in_tempdb = OFF, ignore_dup_key = OFF, online = OFF, 
+  allow_row_locks = on, allow_page_locks = on, FILLFACTOR = 100) ON [PRIMARY] 
+
+go 
+
+/****** Object:  Index [UQ_PrincipalObjectAccess]    Script Date: 12/18/2013 08:53:33 ******/ 
+ALTER TABLE [dbo].[principalobjectaccess] 
+  ADD CONSTRAINT [UQ_PrincipalObjectAccess] UNIQUE NONCLUSTERED ( [principalid] 
+  ASC, [objectid] ASC, [objecttypecode] ASC )WITH (pad_index = OFF, 
+  statistics_norecompute = OFF, sort_in_tempdb = OFF, ignore_dup_key = OFF, 
+  online = OFF, allow_row_locks = on, allow_page_locks = on, FILLFACTOR = 100) 
+  ON [PRIMARY] 
+
+go  

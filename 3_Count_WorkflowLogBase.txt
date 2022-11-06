@@ -1,0 +1,15 @@
+/*WorkflowLogBase Status codes: 
+ Status 1 = In Progress 
+ Status 2 = Succeeded 
+ Status 3 = Failed 
+ Status 4 = Canceled 
+ Status 5 = Waiting 
+ 
+ Replace "OrgName" below with your CRM organization*/
+ 
+ 
+ SELECT wflb.Status, COUNT(wflb.Status) AS TotalRecordCount 
+ FROM WorkflowLogBase wflb WITH(NOLOCK) 
+ WHERE Status IN (2,4,5) 
+ GROUP BY wflb.Status 
+ ORDER BY TotalRecordCount DESC

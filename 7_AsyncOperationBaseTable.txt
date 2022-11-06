@@ -1,0 +1,68 @@
+IF EXISTS (SELECT name from sys.indexes
+                  WHERE name = N'CRM_AsyncOperation_CleanupCompleted')
+      DROP Index AsyncOperationBase.CRM_AsyncOperation_CleanupCompleted
+GO
+CREATE NONCLUSTERED INDEX CRM_AsyncOperation_CleanupCompleted
+ON [dbo].[AsyncOperationBase] ([StatusCode],[StateCode],[OperationType])
+GO
+ 
+while(1=1)
+begin
+ declare @DeleteRowCount int = 10000
+ declare @rowsAffected int
+ declare @DeletedAsyncRowsTable table (AsyncOperationId uniqueidentifier not null primary key)
+ insert into @DeletedAsyncRowsTable(AsyncOperationId)
+ Select top (@DeleteRowCount) AsyncOperationId from AsyncOperationBase
+ where
+  OperationType in (1, 9, 12, 25, 27, 10) 
+  AND StateCode = 3 
+  AND StatusCode in (30, 32)
+  AND CompletedOn < DATEADD(mm, -3, GETDATE())
+  
+ select @rowsAffected = @@rowcount 
+ delete poa from PrincipalObjectAccess poa 
+   join WorkflowLogBase wlb on
+    poa.ObjectId = wlb.WorkflowLogId
+   join @DeletedAsyncRowsTable dart on
+    wlb.AsyncOperationId = dart.AsyncOperationId
+ delete WorkflowLogBase from WorkflowLogBase W, @DeletedAsyncRowsTable d
+ where
+  W.AsyncOperationId = d.AsyncOperationId             
+ delete BulkDeleteFailureBase From BulkDeleteFailureBase B, @DeletedAsyncRowsTable d
+ where
+  B.AsyncOperationId = d.AsyncOperationId
+ delete WorkflowWaitSubscriptionBase from WorkflowWaitSubscriptionBase WS, @DeletedAsyncRowsTable d
+ where
+  WS.AsyncOperationId = d.AsyncOperationID 
+ delete AsyncOperationBase From AsyncOperationBase A, @DeletedAsyncRowsTable d
+ where
+  A.AsyncOperationId = d.AsyncOperationId
+ /*If not calling from a SQL job, use the WAITFOR DELAY*/
+ if(@DeleteRowCount > @rowsAffected)
+  return
+ else
+  WAITFOR DELAY '00:00:02.000'
+end
+
+
+ --Drop the Index on AsyncOperationBase
+ --DROP INDEX AsyncOperationBase.CRM_AsyncOperation_CleanupCompleted ( Execute This at the End )
+
+
+
+--Statuscode
+ --0    Waiting For Resources
+ --10    Waiting
+ --20    In Progress
+ --21    Pausing
+ --22    Canceling
+ --30    Succeeded
+ --31    Failed
+ --32    Canceled
+
+
+ --Statecode
+ --0    Ready
+ --1    Suspended
+ --2    Locked
+ --3    Completed

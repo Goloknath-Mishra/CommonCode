@@ -1,0 +1,277 @@
+-- To DELETE Email that were created ON or AFTER a given date (inclusive). [ ARCHIVE or REPORTING Instances ]
+	
+	BEGIN /* Declaration of Local Variables */
+	DECLARE @DeleteRowCount		 INT
+	DECLARE @TotalrowCount		 INT
+	DECLARE @rowCount			 INT
+	DECLARE @Debug				 INT
+	DECLARE @m                   VARCHAR(max)
+	DECLARE @InputStartDate      VARCHAR(50)
+	DECLARE @InputEndDate        VARCHAR(50)
+	DECLARE @Batch_Count		 INT
+
+   SET  NOCOUNT ON
+   SET  @DeleteRowCount = 25000 -- Do not make this too large or too small
+   
+SELECT @InputStartDate = CONVERT(VARCHAR(50),'2016-09-01',102)
+   SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Task : Cleanup Emails & Incidents ON or After Start Date : ' + @InputStartDate
+   RAISERROR (@m , 0, 1) WITH NOWAIT
+
+   SELECT @InputEndDate = CONVERT(VARCHAR(50),'2017-03-01',102)
+   SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Task : Cleanup Emails & Incidents ON or Before End Date : ' + @InputEndDate
+   RAISERROR (@m , 0, 1) WITH NOWAIT
+
+   END
+
+   BEGIN  /*Rowcount INFO Before Deletion*/
+   SELECT @TotalrowCount =  count(1) from dbo.ActivityPointer AP
+   SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Activities (Before Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+   RAISERROR (@m , 0, 1) WITH NOWAIT
+
+   SELECT @TotalrowCount = count(1) from Email E inner join  dbo.ActivityPointer AP on E.ActivityId = Ap.ActivityId
+   SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Emails  (Before Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+   RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from EmailHashBase
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in EmailHashBase  (Before Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from EmailBase
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in EmailBase (Before Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from ActivityMimeAttachment
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in ActivityMimeAttachment (Before Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from ActivityPartyBase
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in ActivityPartyBase (Before Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from ActivityPointerBase
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in ActivityPointerBase (Before Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	END
+
+	BEGIN /* No of Rows associated with Active Tickets*/
+
+	SELECT @TotalrowCount = count(1) FROM dbo.ActivityPointer AP
+					inner join  Email E
+					on E.ActivityId = Ap.ActivityId
+					inner join incident i on i.incidentid=e.regardingobjectid 
+					where I.CreatedOn >= @InputStartDate and  I.CreatedOn <= @InputEndDate and i.statecode = 0
+					and i.statuscode=1 and Ap.subject like '%Case noti%' or Ap.subject like '%iCARE Pas%' or Ap.subject like'%Overdue C%' or Ap.subject like '%Case Acti%'				
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in Activitypointer in between  cut-off dates and associated with active Tickets : ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT  
+     
+	 END
+
+	BEGIN /* BackUp Table Structures */
+	 
+	IF object_id('BackUp_EmailID_AFTER') IS NOT NULL
+	BEGIN
+	   DROP TABLE BackUp_EmailID_AFTER
+	END
+
+	CREATE TABLE BackUp_EmailID_AFTER (
+	  ActivityId uniqueidentifier PRIMARY KEY CLUSTERED
+	)
+
+	END
+
+	BEGIN /* Backup the Email Ids and Incident Id (GUID) */
+
+		SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Back up Email Id , Incident Id and SLALOG ID'
+		RAISERROR (@m , 0, 1) WITH NOWAIT
+
+      INSERT INTO BackUp_EmailID_AFTER(ActivityId)
+         SELECT AP.ActivityId FROM dbo.ActivityPointer AP
+                inner join  Email E
+                on E.ActivityId = Ap.ActivityId
+				inner join incident i on i.incidentid=e.regardingobjectid 
+          	   where I.CreatedOn >= @InputStartDate and  I.CreatedOn <= @InputEndDate and i.statecode <> 0 
+          	   and i.statuscode<>1 and Ap.subject like '%Case noti%' or Ap.subject like '%iCARE Pas%' or Ap.subject like'%Overdue C%' or Ap.subject like '%Case Acti%'	
+	
+	END
+	 
+	BEGIN /*Drop Temporary tables*/
+
+	IF object_id('tempdb..#TempTable_Email') IS NOT NULL
+	BEGIN
+	   DROP TABLE #TempTable_Email
+	END
+END
+
+	BEGIN /*Create Temporary tables*/
+
+	CREATE TABLE #TempTable_Email (
+	  ActivityId uniqueidentifier PRIMARY KEY CLUSTERED
+	)
+	END 
+	
+	BEGIN /*Starting Cleanup Process*/
+
+	   SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Starting Cleanup Process'
+	   RAISERROR (@m , 0, 1) WITH NOWAIT
+	END
+
+    BEGIN /*Email*/
+
+BEGIN /*ROW Counts of Emails to be deleted*/
+
+SELECT @TotalrowCount = count(1) FROM dbo.ActivityPointer AP
+                inner join  Email E
+                on E.ActivityId = Ap.ActivityId
+				inner join incident i on i.incidentid=e.regardingobjectid 
+          	   where I.CreatedOn >= @InputStartDate and  I.CreatedOn <= @InputEndDate and i.statecode <> 0
+          	   and i.statuscode<>1 and Ap.subject like '%Case noti%' or Ap.subject like '%iCARE Pas%' or Ap.subject like'%Overdue C%' or Ap.subject like '%Case Acti%'	
+
+   SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Emails to be deleted :' + CAST(@TotalrowCount as VARCHAR(20))
+   RAISERROR (@m , 0, 1) WITH NOWAIT
+
+END
+
+BEGIN /* Deleting Emails associated with Incident */
+
+	SET @Batch_Count = 1
+
+	WHILE(1=1)
+	BEGIN
+
+	   -- Perform the DELETEs within Transaction
+	   BEGIN TRANSACTION
+
+		  -- Do the DELETES in CHUNKS of @DeleteRowCount
+		  INSERT INTO #TempTable_Email(ActivityId)
+			 SELECT TOP (@DeleteRowCount) AP.ActivityId FROM dbo.ActivityPointer AP
+					inner join  Email E
+					on E.ActivityId = Ap.ActivityId
+					inner join incident i on i.incidentid=e.regardingobjectid 
+          		   where I.CreatedOn >= @InputStartDate and  I.CreatedOn <= @InputEndDate and i.statecode <> 0
+          		   and i.statuscode<>1 and Ap.subject like '%Case noti%' or Ap.subject like '%iCARE Pas%' or Ap.subject like'%Overdue C%' or Ap.subject like '%Case Acti%'	
+
+		  SELECT @rowCount = count(1) FROM #TempTable_Email
+
+		  SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Batch : ' + CAST(@Batch_Count as VARCHAR(5)) + ' : No of rows in #TempTable_Email :' + CAST(@rowCount as VARCHAR(20))
+		  RAISERROR (@m , 0, 1) WITH NOWAIT
+   
+		  IF(@rowCount = 0) -- No more to delete ?
+		  BEGIN
+			 COMMIT  -- COMMIT the transaction before breaking the loop
+			 BREAK   -- the while loop
+		  END
+
+		  DELETE EmailHashBase from EmailHashBase EH INNER JOIN #TempTable_Email T
+			ON EH.ActivityId = T.ActivityId
+
+		  SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Batch : ' + CAST(@Batch_Count as VARCHAR(5)) + ' : No of rows deleted from EmailHashBase - :' + CAST(@@ROWCOUNT as VARCHAR(20))
+		  RAISERROR (@m , 0, 1) WITH NOWAIT        
+        
+		  --DELETE EmailExtensionBase from EmailExtensionBase EE INNER JOIN #TempTable_Email T
+		  --  ON EE.ActivityId = T.ActivityId
+        
+		  --SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Batch : ' + CAST(@Batch_Count as VARCHAR(5)) + ' : No of rows deleted from EmailExtensionBase - :' + CAST(@@ROWCOUNT as VARCHAR(20))
+		  --RAISERROR (@m , 0, 1) WITH NOWAIT
+              
+		  DELETE EmailBase from EmailBase E INNER JOIN #TempTable_Email T
+			ON E.ActivityId = T.ActivityId
+
+		  SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Batch : ' + CAST(@Batch_Count as VARCHAR(5)) + ' : No of rows deleted from EmailBase - :' + CAST(@@ROWCOUNT as VARCHAR(20))
+		  RAISERROR (@m , 0, 1) WITH NOWAIT
+      
+		  DELETE ActivityMimeAttachment from ActivityMimeAttachment AMA INNER JOIN #TempTable_Email T
+			ON AMA.ObjectId = T.ActivityId
+
+		  SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Batch : ' + CAST(@Batch_Count as VARCHAR(5)) + ' : No of rows deleted from ActivityMimeAttachment - :' + CAST(@@ROWCOUNT as VARCHAR(20))
+		  RAISERROR (@m , 0, 1) WITH NOWAIT
+      
+		  DELETE ActivityPartyBase from ActivityPartyBase APB INNER JOIN #TempTable_Email T
+			ON APB.ActivityId = T.ActivityId
+
+		  SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Batch : ' + CAST(@Batch_Count as VARCHAR(5)) + ' : No of rows deleted from ActivityPartyBase - :' + CAST(@@ROWCOUNT as VARCHAR(20))
+		  RAISERROR (@m , 0, 1) WITH NOWAIT
+
+		  --DELETE IncidentResolutionBase from IncidentResolutionBase IR INNER JOIN #TempTable_Email T
+		  --  ON IR.ActivityId = T.ActivityId
+
+		  --SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Batch : ' + CAST(@Batch_Count as VARCHAR(5)) + ' : No of rows deleted from IncidentResolutionBase - :' + CAST(@@ROWCOUNT as VARCHAR(20))
+		  --RAISERROR (@m , 0, 1) WITH NOWAIT
+                            
+		  DELETE ActivityPointerBase from ActivityPointerBase Ap INNER JOIN #TempTable_Email T
+			ON AP.ActivityId = T.ActivityId
+
+		  SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Batch : ' + CAST(@Batch_Count as VARCHAR(5)) + ' : No of rows deleted from ActivityPointerBase - :' + CAST(@@ROWCOUNT as VARCHAR(20))
+		  RAISERROR (@m , 0, 1) WITH NOWAIT
+        
+		  TRUNCATE TABLE #TempTable_Email
+      
+	  COMMIT  TRANSACTION -- Commit the transaction
+
+	SELECT @TotalrowCount = count(1) FROM dbo.ActivityPointer AP
+					inner join  Email E
+					on E.ActivityId = Ap.ActivityId
+					inner join incident i on i.incidentid=e.regardingobjectid 
+          		   where I.CreatedOn >= @InputStartDate and  I.CreatedOn <= @InputEndDate and i.statecode <> 0
+and i.statuscode<>1 and Ap.subject like '%Case noti%' or Ap.subject like '%iCARE Pas%' or Ap.subject like'%Overdue C%' or Ap.subject like '%Case Acti%'	
+
+		 SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Emails Pending to be deleted : ' + CAST(@TotalrowCount as VARCHAR(20))
+		 RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SET @Batch_Count = @Batch_Count + 1
+
+	END -- END of WHILE
+	END
+
+	END
+
+
+	BEGIN /*Cleanup Process Completed*/
+
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : Cleanup Process Completed'
+    RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	END
+
+    BEGIN  /*Rowcount INFO After Deletion*/
+   
+   SELECT @TotalrowCount =  count(1) from dbo.ActivityPointer AP
+   SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Activities (After Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+   RAISERROR (@m , 0, 1) WITH NOWAIT
+
+   SELECT @TotalrowCount = count(1) from Email E inner join  dbo.ActivityPointer AP on E.ActivityId = Ap.ActivityId
+   SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Emails (After Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+   RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from EmailHashBase
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in EmailHashBase (After Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	--SELECT @TotalrowCount = count(1) from EmailExtensionBase
+	--SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in EmailExtensionBase      (After Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	--RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from EmailBase
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in EmailBase (After Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from ActivityMimeAttachment
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in ActivityMimeAttachment (After Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from ActivityPartyBase
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in ActivityPartyBase (After Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	--SELECT @TotalrowCount = count(1) from IncidentResolutionBase
+	--SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in IncidentResolutionBase  (After Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	--RAISERROR (@m , 0, 1) WITH NOWAIT
+
+	SELECT @TotalrowCount = count(1) from ActivityPointerBase
+	SET @m = 'Time : ' + CONVERT(VARCHAR(MAX),GETDATE(),121) + ' : No of Rows in ActivityPointerBase (After Cleanup): ' + CAST(@TotalrowCount as VARCHAR(20))
+	RAISERROR (@m , 0, 1) WITH NOWAIT
+	END 
+
+-- End of Script
+
+--COMMIT

@@ -1,0 +1,4 @@
+select OBJECT_NAME(object_id), SUM(reserved_page_count) / 128 as ReservedMB, sum(used_page_count) / 128 as UsedMB, MAX(row_count)
+from sys.dm_db_partition_stats
+group by object_id
+order by SUM(reserved_page_count) desc 

@@ -1,0 +1,12 @@
+ SELECT
+            ATT.AttachmentId,ATT.FileName,ACT.ModifiedOn
+        FROM
+            Attachment AS ATT
+            INNER JOIN ActivityMimeAttachment AS XXX ON ATT.AttachmentId = XXX.AttachmentId
+            INNER JOIN EmailBase AS EML ON EML.ActivityId = XXX.ObjectId
+            INNER JOIN ActivityPointer AS ACT ON EML.ActivityId = ACT.ActivityId
+        WHERE
+            XXX.ObjectTypeCode = 4202
+            --AND ATT.FileSize > 36
+            AND ACT.ModifiedOn < GETDATE() - 90
+            and ATT.FileName='ICARE Password Change Guide.pdf'

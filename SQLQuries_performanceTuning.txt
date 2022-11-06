@@ -1,0 +1,96 @@
+
+
+
+To check how many records are there in table:-
+
+Select count(AsyncOperationId) from AsyncOperationBase 
+where OperationType in (1, 9, 12, 25, 27, 10) AND StateCode = 3 AND StatusCode in (30, 32)
+ 
+ ----------------------------------------------------------------------
+select COUNT(*) from WorkflowLogBase 
+ 
+----------------------------------------------------------------------
+select * from BulkDeleteFailureBase 
+ 
+------------------------------------------------------------------------ 
+select count(*) from WorkflowWaitSubscriptionBase
+
+------------------------------------------------------------------------
+
+
+Script to be run on CRM database to increase performance:-
+
+IF EXISTS (SELECT name from sys.indexes
+                  WHERE name = N'CRM_AsyncOperation_CleanupCompleted')
+      DROP Index AsyncOperationBase.CRM_AsyncOperation_CleanupCompleted
+GO
+CREATE NONCLUSTERED INDEX CRM_AsyncOperation_CleanupCompleted
+ON [dbo].[AsyncOperationBase] ([StatusCode],[StateCode],[OperationType])
+GO
+
+declare @DeleteRowCount int
+Select @DeleteRowCount = 2000
+declare @DeletedAsyncRowsTable table (AsyncOperationId uniqueidentifier not null primary key)
+declare @continue int, @rowCount int
+select @continue = 1
+while (@continue = 1)
+begin      
+begin tran      
+insert into @DeletedAsyncRowsTable(AsyncOperationId)
+      Select top (@DeleteRowCount) AsyncOperationId from AsyncOperationBase
+      where OperationType in (1, 9, 12, 25, 27, 10) AND StateCode = 3 AND StatusCode in (30, 32)     
+       Select @rowCount = 0
+       
+      Select @rowCount = count(*) from @DeletedAsyncRowsTable
+      print @rowCount
+      select @continue = case when @rowCount <= 0 then 0 else 1 end      
+        if (@continue = 1)        begin
+        ------------select the count of Workflowbase
+        declare @workflowcount int
+        select  @workflowcount = COUNT(*) from WorkflowLogBase W, @DeletedAsyncRowsTable d
+            where W.AsyncOperationId = d.AsyncOperationId
+            print  'WorkflowLogBase:'+cast(@workflowcount as varchar)
+           ------------------------ 
+            delete WorkflowLogBase from WorkflowLogBase W, @DeletedAsyncRowsTable d
+            where W.AsyncOperationId = d.AsyncOperationId 
+             
+             ---------select bulkdeleteCount
+             declare @bulkdeleteCount int
+             select @bulkdeleteCount = COUNT(*) From BulkDeleteFailureBase B, @DeletedAsyncRowsTable d
+            where B.AsyncOperationId = d.AsyncOperationId
+            print 'BulkDeleteFailureBase:'+cast(@bulkdeleteCount as varchar)
+            ---------------------------------------------
+                     
+			delete BulkDeleteFailureBase From BulkDeleteFailureBase B, @DeletedAsyncRowsTable d
+            where B.AsyncOperationId = d.AsyncOperationId
+            -------select wfwsubcount
+            declare @wfwsubcount int
+            
+            select @wfwsubcount = COUNT(*) from WorkflowWaitSubscriptionBase WS, @DeletedAsyncRowsTable d
+			where WS.AsyncOperationId = d.AsyncOperationID
+			print 'WorkflowWaitSubscriptionBase:'+cast( @wfwsubcount as varchar)
+			--------------------------------
+			
+			delete WorkflowWaitSubscriptionBase from WorkflowWaitSubscriptionBase WS, @DeletedAsyncRowsTable d
+			where WS.AsyncOperationId = d.AsyncOperationID 
+ 
+			------select asycopCount 
+			declare @asycopCount int
+			select @asycopCount = COUNT(A.AsyncOperationId) From AsyncOperationBase A, @DeletedAsyncRowsTable d
+            where A.AsyncOperationId = d.AsyncOperationId 
+            print 'AsyncOperationBase:'+cast(@asycopCount as varchar)
+            --------------------------------
+            delete AsyncOperationBase From AsyncOperationBase A, @DeletedAsyncRowsTable d
+            where A.AsyncOperationId = d.AsyncOperationId             
+            delete @DeletedAsyncRowsTable      
+end       
+commit
+end
+--Drop the Index on AsyncOperationBase
+DROP INDEX AsyncOperationBase.CRM_AsyncOperation_CleanupCompleted
+
+--------------------------------------------------------------------------------------------------------------------
+
+
+     
+      

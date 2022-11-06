@@ -1,0 +1,12 @@
+/*Replace "OrgName" below with your CRM organization*/
+ 
+ 
+ 
+ WITH POAS as (SELECT ObjectTypeCode, COUNT(ObjectTypeCode) AS TotalRecordCount
+ FROM [dbo].[PrincipalObjectAccess] POA WITH (NOLOCK)
+ GROUP BY ObjectTypeCode)
+ SELECT MTDSE.Name, POAS.ObjectTypeCode, TotalRecordCount
+ FROM POAS JOIN ( SELECT [Name],[ObjectTypeCode] 
+ FROM [MetadataSchema].[Entity] 
+ GROUP BY [Name], [ObjectTypeCode] ) MTDSE ON MTDSE.ObjectTypeCode = POAS.ObjectTypeCode
+ ORDER BY POAS.TotalRecordCount DESC
